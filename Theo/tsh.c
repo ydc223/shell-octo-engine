@@ -455,6 +455,35 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+	int olderrno = errno;
+	sigset_t mask_all, prev_all;
+	pid_t pid;
+	int status;
+
+	sigfillset(&mask_all);
+
+	/*---------- Catching SIGINT and sending it to foreground job --------*/
+
+	while((pid=waitpid(fgpid(jobs), &status, WHOHANG|WUNTRACED))>0){
+		if(WIFSTOPPED(status)){
+			sigtstp_handler(20);
+		}
+		else if (WIFSIGNALED(status)){  
+			sigint_handler(-2);  
+		}  
+		else if (WIFEXITED(status)){  
+			Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+			deletejob(pid);
+			Sigprocmask(SIG_SETMASK, &prev_all, &NULL);		} 
+	}
+
+	if(errno!=ECHILD){
+
+		unix_error("waitpid error");	
+	}
+
+	errno = olderrno;
+
     return;
 }
 
@@ -465,6 +494,25 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+	write(STDOUT_FILENO, "Terminating a foreground process...", 35 )
+	/*Temporarely blocking all signals */
+	sigset_t mask, prev_mask;
+	sigemptyset(&mask);
+	sigfillset(&mask);
+
+	/*---------- Catching SIGINT and sending it to foreground job --------*/
+	pid_t pid = fgpid(jobs);
+	
+	/*Block all signals and save previous blocked set */
+	Sigprocmask(SIG_BLOCK, &mask, &prev_mask);
+
+	if(kill(-pid, SIGINT)<0){
+		unix_error("Ctrl-c error\n");
+	};
+
+	/*Restore previous blocked set, unblocking all signals */
+	Sigprocmask(SIG_SETMASK, &prev_mask, NULL);
+
     return;
 }
 
@@ -475,6 +523,25 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+	write(STDOUT_FILENO, "Stopping a foreground process...", 32 )
+	/*Temporarely blocking all signals */
+	sigset_t mask, prev_mask;
+	sigemptyset(&mask);
+	sigfillset(&mask);
+
+	/*Block all signals and save previous blocked set */
+	Sigprocmask(SIG_BLOCK, &mask, &prev_mask);
+
+	/* Catching SIGINT and sending it to foreground job */
+	pid_t pid = fgpid(jobs);
+	
+	if(kill(-pid, SIGTSTP)<0){
+		unix_error("Ctrl-z error\n");
+	};
+
+	/*Restore previous blocked set, unblocking all signals */
+	Sigprocmask(SIG_SETMASK, &prev_mask, NULL);
+
     return;
 }
 
