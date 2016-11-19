@@ -358,6 +358,70 @@ int builtin_cmd(char **argv)  //done
  */
 void do_bgfg(char **argv) 
 {
+    struct job_t *job;
+    char *id = argv[1];
+    int jid;    
+    
+    // exception: id doesn't exist, should never happen
+    if(id == NULL) {
+        printf("%s cmd requires PID or %%jobid argument \n", argv[0]);
+        return;
+    }
+    // for PID
+    if(isdigit(id[0])) { 
+        pid_t pid= atoi(id);  
+
+        if(!pid || !(job = getjobpid(jobs, pid))) {  
+            printf("(%d): No such process \n", pid);  
+            return;  
+        }   
+    }
+
+    // for JID
+    else if(id[0] == '%') {  
+        jid = atoi(&id[1]);  
+        if(!(jid) || !(job = getjobjid(jobs, jid))) {  
+            printf("(%s): No such job\n", id);  
+            return;  
+        }  
+    }  
+
+    else {
+        printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+        return;
+    }
+
+    if (verbose) {
+        printf("resuming program with pid %d \n", job->pid);
+    }
+    
+    // resuming 
+    if(kill(-(job->pid), SIGCONT) < 0) {
+        if(errno != ESRCH){
+            unix_error("kill error");
+        }
+    }
+    
+    // To determine the bg and fg
+    if(!strcmp("fg", argv[0])) {
+        if (verbose) {
+            printf("setting job status to FG \n");
+        }
+        job->state = FG;
+        waitfg(job->pid);
+    } 
+    else if(!strcmp("bg", argv[0])) {
+        if (verbose) {
+            printf("setting job status to BG \n");
+        }
+        job->state = BG;
+        printf("[%d] (%d) %s", job->jid, job->pid, job->cmdline);
+        
+    } 
+    else {
+        printf("command neither bg nor fg \n");
+    }
+
     return;
 }
 
