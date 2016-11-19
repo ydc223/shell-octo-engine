@@ -184,7 +184,8 @@ void eval(char *cmdline)
     if (verbose) {
         int i = 0;
         while (argv[i]) {
-            printf("arg. ", i++, ": ", argv[i], "\n");
+            printf("argument (%d): %s \n", i, argv[i]);
+            i++;
         }
     }
 
