@@ -169,6 +169,91 @@ int main(int argc, char **argv)
 */
 void eval(char *cmdline) 
 {
+    char *argv[MAXARGS];  // list of arguments
+    int is_bg;  // true if the user has requested a BG job, false if the user has requested a FG job
+    pid_t pid;      // process id
+    sigset_t mask;      // used for blocking signals
+    
+    is_bg = parseline(cmdline, argv);
+
+    //if no arguments given, exit
+    if (!argv[0]) {
+        return;
+    }
+
+    if (verbose) {
+        int i = 0;
+        while (argv[i]) {
+            printf("arg. ", i++, ": ", argv[i], "\n");
+        }
+    }
+
+    if(!builtin_cmd(argv)) {         
+        // Blocking SIGCHILD signals
+        if(sigaddset(&mask, SIGCHLD) < 0){
+            unix_error("sigaddset error \n");
+        }
+        if(sigemptyset(&mask) < 0){
+            unix_error("sigemptyset error \n");
+        }
+        if(sigprocmask(SIG_BLOCK, &mask, NULL) < 0){
+            unix_error("sigprocmask error \n");
+        }
+        
+        if (verbose) {
+            printf("not a built-in command \n");
+        }
+
+        // Forking
+        if((pid = fork()) < 0){
+            unix_error("Could not fork! \n");
+        }
+        // Child
+        else if (pid == 0) {
+            if (verbose) {
+                printf("I am a child \n");
+            }
+            // unblocking the child's signal
+            if (sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0){
+                unix_error("sigprocmask error \n");
+            }
+            //new process group
+            if(setpgid(0, 0) < 0) {
+                unix_error("setpgid error \n");
+            }
+            // run the requested command
+            if(execve(argv[0], argv, environ) < 0) {
+                printf("%s: not found! \n", argv[0]);
+                exit(0);
+            }
+        } 
+        // Parent
+        else {
+            //add job to list
+            if(!is_bg){
+                addjob(jobs, pid, FG, cmdline);
+            }
+            else {
+                addjob(jobs, pid, BG, cmdline);
+            }
+            //unblock signal
+            if (sigprocmask(SIG_UNBLOCK, &mask, NULL) < 0){
+                unix_error("sigprocmask error \n");
+            }
+            
+            // testing for fg job
+            if (!is_bg){
+                if (verbose) {
+                    printf("blocking while fg completes... \n");
+                }
+                waitfg(pid);
+            } 
+            else {
+                printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+            }
+        }
+    }
+    
     return;
 }
 
