@@ -224,7 +224,7 @@ void eval(char *cmdline)
             }
             // run the requested command
             if(execve(argv[0], argv, environ) < 0) {
-                printf("%s: not found! \n", argv[0]);
+                printf("%s: Command not found\n", argv[0]);
                 exit(0);
             }
         } 
@@ -365,7 +365,7 @@ void do_bgfg(char **argv)
     
     // exception: id doesn't exist, should never happen
     if(id == NULL) {
-        printf("%s cmd requires PID or %%jobid argument \n", argv[0]);
+        printf("%s command requires PID or %%jobid argument \n", argv[0]);
         return;
     }
     // for PID
@@ -388,7 +388,7 @@ void do_bgfg(char **argv)
     }  
 
     else {
-        printf("%s: argument must be a PID or %%jobid\n", argv[0]);
+        printf("%s: argument must be a PID or Jobid \n", argv[0]);
         return;
     }
 
@@ -399,28 +399,28 @@ void do_bgfg(char **argv)
     // resuming 
     if(kill(-(job->pid), SIGCONT) < 0) {
         if(errno != ESRCH){
-            unix_error("kill error");
+            unix_error("SIGCONT error");
         }
     }
     
     // To determine the bg and fg
     if(!strcmp("fg", argv[0])) {
         if (verbose) {
-            printf("setting job status to FG \n");
+            printf("changing job status to FG \n");
         }
         job->state = FG;
         waitfg(job->pid);
     } 
     else if(!strcmp("bg", argv[0])) {
         if (verbose) {
-            printf("setting job status to BG \n");
+            printf("changing job status to BG \n");
         }
         job->state = BG;
         printf("[%d] (%d) %s", job->jid, job->pid, job->cmdline);
         
     } 
     else {
-        printf("command neither bg nor fg \n");
+        printf("not BG or FG \n");
     }
 
     return;
@@ -455,36 +455,33 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
-	int olderrno = errno;
-	sigset_t mask_all, prev_all;
-	pid_t pid;
 	int status;
-
-	sigfillset(&mask_all);
-
-	/*---------- Catching SIGINT and sending it to foreground job --------*/
-
-	while((pid=waitpid(fgpid(jobs), &status, WHOHANG|WUNTRACED))>0){
-		if(WIFSTOPPED(status)){
-			sigtstp_handler(20);
+	int sign;
+	int pid;
+	if (verbose) {
+		printf("Caught SIGCHLD \n");
+	}
+	while ((pid = waitpid(-1, &status, WNOHANG|WUNTRACED)) > 0) {
+		if (pid == -1) {
+			unix_error("waitpid error\n");
 		}
-		else if (WIFSIGNALED(status)){  
-			sigint_handler(-2);  
-		}  
-		else if (WIFEXITED(status)){  
-			Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
-			deletejob(pid);
-			Sigprocmask(SIG_SETMASK, &prev_all, &NULL);		} 
+		if (sign = WSTOPSIG(status)) {
+			printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(pid), pid, sign);
+			getjobpid(jobs, pid)->state = ST;
+		}
+		else if (sign = WTERMSIG(status)) {
+			printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(pid), pid, sign);
+			deletejob(jobs, pid);
+		}
+		else if (WIFEXITED(status)) {
+			if (verbose) {
+				printf("Process %d exited normally\n", pid);
+			}
+			deletejob(jobs, pid);	
+		}
 	}
-
-	if(errno!=ECHILD){
-
-		unix_error("waitpid error");	
-	}
-
-	errno = olderrno;
-
-    return;
+	
+	return;
 }
 
 /* 
@@ -494,26 +491,23 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
-	write(STDOUT_FILENO, "Terminating a foreground process...", 35 )
-	/*Temporarely blocking all signals */
-	sigset_t mask, prev_mask;
-	sigemptyset(&mask);
-	sigfillset(&mask);
+	if (verbose) {
+		printf("Caught SIGINT \n");
+	}
+	pid_t pid;
 
-	/*---------- Catching SIGINT and sending it to foreground job --------*/
-	pid_t pid = fgpid(jobs);
-	
-	/*Block all signals and save previous blocked set */
-	Sigprocmask(SIG_BLOCK, &mask, &prev_mask);
+	if (pid = fgpid(jobs)) {
 
-	if(kill(-pid, SIGINT)<0){
-		unix_error("Ctrl-c error\n");
-	};
-
-	/*Restore previous blocked set, unblocking all signals */
-	Sigprocmask(SIG_SETMASK, &prev_mask, NULL);
-
-    return;
+		if (verbose) {
+			printf("Killing fg job with pid %d", pid);
+		}
+		// if fg job found, kill fg group
+		if (kill(-pid, SIGINT) < 0) {
+			unix_error("Ctrl-C error\n");
+		}
+	}
+	// if no fg job, do nothing.
+	return;
 }
 
 /*
@@ -523,26 +517,17 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
-	write(STDOUT_FILENO, "Stopping a foreground process...", 32 )
-	/*Temporarely blocking all signals */
-	sigset_t mask, prev_mask;
-	sigemptyset(&mask);
-	sigfillset(&mask);
-
-	/*Block all signals and save previous blocked set */
-	Sigprocmask(SIG_BLOCK, &mask, &prev_mask);
-
-	/* Catching SIGINT and sending it to foreground job */
-	pid_t pid = fgpid(jobs);
-	
-	if(kill(-pid, SIGTSTP)<0){
-		unix_error("Ctrl-z error\n");
-	};
-
-	/*Restore previous blocked set, unblocking all signals */
-	Sigprocmask(SIG_SETMASK, &prev_mask, NULL);
-
-    return;
+	if (verbose) {
+		printf("Caught SIGSTP \n");
+	}
+	pid_t pid;
+	if (pid = fgpid(jobs)) {
+		/* Kill group that pid belongs to */
+		if (kill(-pid, SIGTSTP) < 0) {
+			unix_error("Ctrl-z error\n");
+		}
+	}
+	return;
 }
 
 /*********************
