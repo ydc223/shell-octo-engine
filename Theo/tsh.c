@@ -5,6 +5,8 @@
 
     Theodore Tenev (ttt287)
     Yana Chala (ydc223)
+    Team Name: ttt287+ydc223
+
 
  */
 #include <stdio.h>
