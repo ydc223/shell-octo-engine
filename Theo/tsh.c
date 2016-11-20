@@ -248,7 +248,7 @@ void eval(char *cmdline)
                 waitfg(pid);
             } 
             else {
-                printf("Job id: %d, pid: %d, args: %s", pid2jid(pid), pid, cmdline);
+                printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
             }
         }
     }
