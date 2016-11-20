@@ -170,26 +170,24 @@ int main(int argc, char **argv)
 void eval(char *cmdline) 
 {
     char *argv[MAXARGS];  // list of arguments
-    int is_bg;  // true if the user has requested a BG job, false if the user has requested a FG job
     pid_t pid;      // process id
+    int is_bg;  // true if the user has requested a BG job, false if the user has requested a FG job
     sigset_t mask;      // used for blocking signals
+
     
     is_bg = parseline(cmdline, argv);
 
     //if no arguments given, exit
-    if (!argv[0]) {
+    if (argv[0]==0) {
         return;
     }
 
     if (verbose) {
-        int i = 0;
-        while (argv[i]) {
-            printf("argument (%d): %s \n", i, argv[i]);
-            i++;
-        }
+        printf("arguments: %s \n", *argv);
+
     }
 
-    if(!builtin_cmd(argv)) {         
+    if(builtin_cmd(argv)==0) {         
         // Blocking SIGCHILD signals
         if(sigaddset(&mask, SIGCHLD) < 0){
             unix_error("sigaddset error \n");
@@ -220,18 +218,18 @@ void eval(char *cmdline)
             }
             //new process group
             if(setpgid(0, 0) < 0) {
-                unix_error("setpgid error \n");
+                unix_error("Cannot create new process group \n");
             }
             // run the requested command
             if(execve(argv[0], argv, environ) < 0) {
-                printf("%s: Command not found\n", argv[0]);
+                printf("%s: Command not found \n", argv[0]);
                 exit(0);
             }
         } 
         // Parent
         else {
             //add job to list
-            if(!is_bg){
+            if(is_bg==0){
                 addjob(jobs, pid, FG, cmdline);
             }
             else {
@@ -243,14 +241,14 @@ void eval(char *cmdline)
             }
             
             // testing for fg job
-            if (!is_bg){
+            if (is_bg==0){
                 if (verbose) {
                     printf("blocking while fg completes... \n");
                 }
                 waitfg(pid);
             } 
             else {
-                printf("[%d] (%d) %s", pid2jid(pid), pid, cmdline);
+                printf("Job id: %d, pid: %d, args: %s", pid2jid(pid), pid, cmdline);
             }
         }
     }
@@ -323,7 +321,7 @@ int parseline(const char *cmdline, char **argv)
 int builtin_cmd(char **argv)  //done
 {
    
-    if (!strcmp(argv[0], "quit")) {
+    if (!strcmp("quit", argv[0])) {
         if (verbose) {
             printf("quitting... \n");
     }
@@ -359,20 +357,21 @@ int builtin_cmd(char **argv)  //done
  */
 void do_bgfg(char **argv) 
 {
-    struct job_t *job;
+	int jid;    
     char *id = argv[1];
-    int jid;    
+    struct job_t *job;
+
     
     // exception: id doesn't exist, should never happen
     if(id == NULL) {
-        printf("%s command requires PID or %%jobid argument \n", argv[0]);
+        printf("%s command requires PID or jobid argument \n", argv[0]);
         return;
     }
     // for PID
     if(isdigit(id[0])) { 
         pid_t pid= atoi(id);  
 
-        if(!pid || !(job = getjobpid(jobs, pid))) {  
+        if((pid==0) || ((job = getjobpid(jobs, pid))==0)) {  
             printf("(%d): No such process \n", pid);  
             return;  
         }   
@@ -381,7 +380,7 @@ void do_bgfg(char **argv)
     // for JID
     else if(id[0] == '%') {  
         jid = atoi(&id[1]);  
-        if(!(jid) || !(job = getjobjid(jobs, jid))) {  
+        if(((jid)==0) || ((job = getjobjid(jobs, jid))==0)) {  
             printf("(%s): No such job\n", id);  
             return;  
         }  
@@ -403,7 +402,7 @@ void do_bgfg(char **argv)
         }
     }
     
-    // To determine the bg and fg
+    // determining the BG and FG
     if(!strcmp("fg", argv[0])) {
         if (verbose) {
             printf("changing job status to FG \n");
@@ -458,9 +457,20 @@ void sigchld_handler(int sig)
 	int status;
 	int sign;
 	int pid;
+	sigset_t mask, prev_mask;
+
 	if (verbose) {
 		printf("Caught SIGCHLD \n");
 	}
+
+	if(sigemptyset(&mask) < 0){
+            unix_error("sigemptyset error \n");
+    }
+
+	if(sigfillset(&mask) < 0){
+            unix_error("sigfillset error \n");
+    }
+        
 	while ((pid = waitpid(-1, &status, WNOHANG|WUNTRACED)) > 0) {
 		if (pid == -1) {
 			unix_error("waitpid error\n");
@@ -471,13 +481,25 @@ void sigchld_handler(int sig)
 		}
 		else if (sign = WTERMSIG(status)) {
 			printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(pid), pid, sign);
+			if(sigprocmask(SIG_BLOCK, &mask, NULL) < 0){
+	            unix_error("sigprocmask error \n");
+	        }
 			deletejob(jobs, pid);
+			if(sigprocmask(SIG_SETMASK, &prev_mask, NULL) < 0){
+	            unix_error("sigprocmask error \n");
+	        }
 		}
 		else if (WIFEXITED(status)) {
 			if (verbose) {
 				printf("Process %d exited normally\n", pid);
 			}
-			deletejob(jobs, pid);	
+			if(sigprocmask(SIG_BLOCK, &mask, NULL) < 0){
+	            unix_error("sigprocmask error \n");
+	        }
+			deletejob(jobs, pid);
+			if(sigprocmask(SIG_SETMASK, &prev_mask, NULL) < 0){
+	            unix_error("sigprocmask error \n");
+	        }
 		}
 	}
 	
@@ -495,8 +517,25 @@ void sigint_handler(int sig)
 		printf("Caught SIGINT \n");
 	}
 	pid_t pid;
+	sigset_t mask, prev_mask;
 
-	if (pid = fgpid(jobs)) {
+	if(sigemptyset(&mask) < 0){
+            unix_error("sigemptyset error \n");
+    }
+
+	if(sigfillset(&mask) < 0){
+            unix_error("sigfillset error \n");
+    }
+
+    if(sigprocmask(SIG_BLOCK, &mask, NULL) < 0){
+        unix_error("sigprocmask error \n");
+    }
+	pid = fgpid(jobs);
+	if(sigprocmask(SIG_SETMASK, &prev_mask, NULL) < 0){
+        unix_error("sigprocmask error \n");
+    }
+
+	if (pid) {
 
 		if (verbose) {
 			printf("Killing fg job with pid %d", pid);
@@ -521,7 +560,24 @@ void sigtstp_handler(int sig)
 		printf("Caught SIGSTP \n");
 	}
 	pid_t pid;
-	if (pid = fgpid(jobs)) {
+	sigset_t mask, prev_mask;
+
+	if(sigemptyset(&mask) < 0){
+            unix_error("sigemptyset error \n");
+    }
+
+	if(sigfillset(&mask) < 0){
+            unix_error("sigfillset error \n");
+    }
+
+    if(sigprocmask(SIG_BLOCK, &mask, NULL) < 0){
+        unix_error("sigprocmask error \n");
+    }
+	pid = fgpid(jobs);
+	if(sigprocmask(SIG_SETMASK, &prev_mask, NULL) < 0){
+        unix_error("sigprocmask error \n");
+    }
+	if (pid) {
 		/* Kill group that pid belongs to */
 		if (kill(-pid, SIGTSTP) < 0) {
 			unix_error("Ctrl-z error\n");
